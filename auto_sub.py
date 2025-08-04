@@ -6,9 +6,8 @@ import re
 from telethon import TelegramClient, functions, errors
 from datetime import datetime,timezone,UTC
 import requests
-import sqlite3
+from db_script.mysql_conn import get_mysql_connection
 
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "main.db"))
 
 # 📱 Данные вашего Telegram приложения
 api_id = 25064132
@@ -40,18 +39,16 @@ subscribed_channels = set()
 
 
 
-def accepted_giveaway_ids(conn):
+def accepted_giveaway_ids():
+    conn = get_mysql_connection()
     c = conn.cursor()
     c.execute("SELECT id FROM accepted_giveaways")
     rows = c.fetchall()
+    conn.close()
     return set(row[0] for row in rows)
 
 def get_new_channels_and_giveaways():
-    if not os.path.exists(DB_PATH):
-        print("❌ База данных не найдена.")
-        return [], {}
-
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_mysql_connection()
     c = conn.cursor()
     c.execute("SELECT id, data FROM new_giveaways")
     rows = c.fetchall()
@@ -79,7 +76,7 @@ def get_new_channels_and_giveaways():
 
 
 def save_accepted_giveaway_to_db(giveaway):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_mysql_connection()
     c = conn.cursor()
 
     prizes = []
@@ -103,8 +100,8 @@ def save_accepted_giveaway_to_db(giveaway):
 
     try:
         c.execute("""
-            INSERT OR IGNORE INTO accepted_giveaways (id, data, accepted_at)
-            VALUES (?, ?, ?)
+            INSERT IGNORE INTO accepted_giveaways (id, data, accepted_at)
+            VALUES (%s, %s, %s)
         """, (data["id"], json.dumps(data, ensure_ascii=False), datetime.now(UTC).isoformat()))
         conn.commit()
     except Exception as e:
@@ -115,6 +112,15 @@ def save_accepted_giveaway_to_db(giveaway):
 def extract_wait_time(error_msg):
     match = re.search(r'(\d+) seconds', error_msg)
     return int(match.group(1)) if match else 60
+
+async def handle_leave_channel(username):
+    try:
+        result = await client(functions.channels.LeaveChannelRequest(username))
+        print(f"✅ Отписан от @{username}")
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка при отписке от @{username}: {e}")
+        return False
 
 # 🆕 Функция для обработки подачи заявки на вступление
 async def handle_join_request(username):
@@ -143,7 +149,6 @@ async def monitor_and_subscribe():
     giveaway_counter = 0
     while True:
         try:
-            conn = sqlite3.connect(DB_PATH)
             new_channels, id_to_giveaway = get_new_channels_and_giveaways()
             channels_by_giveaway = {}
             for username, giveaway_id in new_channels:
@@ -163,7 +168,7 @@ async def monitor_and_subscribe():
                             subscribed_channels.add(username)
         
                         await asyncio.sleep(60)
-                    if all_success and giveaway_id and giveaway_id not in accepted_giveaway_ids(conn):
+                    if all_success and giveaway_id and giveaway_id not in accepted_giveaway_ids():
                         url = f"https://portals-market.com/api/giveaways/{giveaway_id}/join"
                         save_accepted_giveaway_to_db(id_to_giveaway[giveaway_id])
                         
@@ -171,12 +176,16 @@ async def monitor_and_subscribe():
                         print("Response JSON:", response.json() if response.headers.get("Content-Type") == "application/json" else response.text)
                         giveaway_counter += 1
                         print(f"📝 Розыгрыш {giveaway_id} добавлен в БД ")
+                         # После добавления розыгрыша — отписываемся от каналов
+                        for username in usernames:
+                            await handle_leave_channel(username)
+                            subscribed_channels.discard(username)
+                            await asyncio.sleep(60)  # удаляем из множества подписанных
                         if giveaway_counter % 10 == 0:
                             print("⏸ Достигнуто 10 розыгрышей. Пауза 5 минут...")
                             await asyncio.sleep(300)
             else:
                 print("🔁 Нет новых каналов для подписки.")
-            conn.close()
             await asyncio.sleep(30)
         except Exception as e:
             print(f"\n\n[RESTART] Ошибка: {e}\nОжидание 60 секунд перед перезапуском...\n")

@@ -2,9 +2,8 @@ import requests
 import json
 import os
 import time
-import sqlite3
+from db_script.mysql_conn import get_mysql_connection
 from datetime import datetime,timezone
-from db_script.db_init import init_db
 import asyncio
 
 DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "main.db"))
@@ -16,7 +15,7 @@ def fetch_all_giveaways(headers):
     response.raise_for_status()
     data = response.json()
 
-    results = data.get("giveaways", [])
+    results = data.get("giveaways", []) 
     all_results = results
     return all_results
 
@@ -46,27 +45,37 @@ def clear_new_giveaways(conn):
 
 def insert_all_giveaways(conn, giveaways):
     c = conn.cursor()
-    now = datetime.now(timezone.utc).isoformat()  
+    now = datetime.now(timezone.utc).isoformat()
 
     for item in giveaways:
         c.execute(
-            "INSERT INTO giveaways (id, data, created_at) VALUES (?, ?, ?)",
+            """
+            INSERT INTO giveaways (id, data, created_at)
+            VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE data = VALUES(data), created_at = VALUES(created_at)
+            """,
             (item["id"], json.dumps(item, ensure_ascii=False), now)
         )
     conn.commit()
+
 
 def insert_new_giveaways(conn, giveaways):
     if not giveaways:
         return
     c = conn.cursor()
-    now = datetime.now(timezone.utc).isoformat()  
+    now = datetime.now(timezone.utc).isoformat()
 
     for item in giveaways:
         c.execute(
-            "INSERT INTO new_giveaways (id, data, detected_at) VALUES (?, ?, ?)",
+            """
+            INSERT INTO new_giveaways (id, data, detected_at)
+            VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE data = VALUES(data), detected_at = VALUES(detected_at)
+            """,
             (item["id"], json.dumps(item, ensure_ascii=False), now)
         )
     conn.commit()
+
 
 async def check_giveaways():
     while  True:
@@ -80,7 +89,7 @@ async def check_giveaways():
         }
 
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = get_mysql_connection()
             new_data = join_gives(headers)
             all_data = fetch_all_giveaways(headers)
             filtered_data = [item for item in all_data if item.get("participants_count", 0) > 0]
@@ -125,7 +134,5 @@ async def check_giveaways():
             print(f"[{datetime.now()}] ❌ Ошибка: {e}")
         await asyncio.sleep(600)
 
-if __name__ == "__main__":
-    init_db()  # Убедись, что таблицы есть
-    
+if __name__ == "__main__":    
     check_giveaways()  # каждые полчаса

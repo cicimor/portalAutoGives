@@ -1,9 +1,7 @@
-import sqlite3
-import os
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "main.db"))
+from db_script.mysql_conn import get_mysql_connection
 
 def load_users():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_mysql_connection()
     c = conn.cursor()
     c.execute('SELECT id, prizes_count_filter, min_volume_filter, require_boost_filter, lang FROM users')
     rows = c.fetchall()
@@ -20,9 +18,9 @@ def load_users():
     return users
 
 def get_user(user_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_mysql_connection()
     c = conn.cursor()
-    c.execute('SELECT id, prizes_count_filter, min_volume_filter, require_boost_filter, lang FROM users WHERE id=?', (user_id,))
+    c.execute('SELECT id, prizes_count_filter, min_volume_filter, require_boost_filter, lang FROM users WHERE id=%s', (user_id,))
     row = c.fetchone()
     conn.close()
     if row:
@@ -36,16 +34,16 @@ def get_user(user_id):
     return None
 
 def save_user(user):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_mysql_connection()
     c = conn.cursor()
     c.execute('''
         INSERT INTO users (id, prizes_count_filter, min_volume_filter, require_boost_filter, lang)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            prizes_count_filter=excluded.prizes_count_filter,
-            min_volume_filter=excluded.min_volume_filter,
-            require_boost_filter=excluded.require_boost_filter,
-            lang=excluded.lang
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            prizes_count_filter = VALUES(prizes_count_filter),
+            min_volume_filter = VALUES(min_volume_filter),
+            require_boost_filter = VALUES(require_boost_filter),
+            lang = VALUES(lang)
     ''', (
         user["id"],
         user.get("prizes_count_filter", 0),
@@ -57,8 +55,8 @@ def save_user(user):
     conn.close()
 
 def delete_user(user_id):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_mysql_connection()
     c = conn.cursor()
-    c.execute('DELETE FROM users WHERE id=?', (user_id,))
+    c.execute('DELETE FROM users WHERE id=%s', (user_id,))
     conn.commit()
     conn.close()

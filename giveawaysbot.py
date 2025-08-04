@@ -12,12 +12,11 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from datetime import datetime, timezone
-import sqlite3
+from db_script.mysql_conn import get_mysql_connection
 import time
 from gives import check_giveaways
 from auto_sub import run_main_loop
 
-from db_script.db_init import init_db
 from db_script.db_users import load_users, save_user, get_user, delete_user
 from db_script.db_sentids import load_sent_ids_db, save_sent_ids_db
 
@@ -34,7 +33,6 @@ CHANNEL_ID =  -1002725075873
 CHECK_INTERVAL = 10
 semaphore = asyncio.Semaphore(30)  # До 30 параллельных сообщений
 
-init_db()
 
 bot = Bot(
     token=TOKEN,
@@ -47,7 +45,8 @@ class FilterStates(StatesGroup):
     waiting_for_min_volume = State()
 
 def load_accepted_giveaways():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_mysql_connection()
+
     c = conn.cursor()
     c.execute("SELECT data FROM accepted_giveaways")
     rows = c.fetchall()
@@ -55,7 +54,8 @@ def load_accepted_giveaways():
     return [json.loads(row[0]) for row in rows]
 
 def load_confirmed_giveaways():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_mysql_connection()
+
     c = conn.cursor()
     c.execute("SELECT data FROM confirmed_giveaways")
     rows = c.fetchall()
@@ -63,11 +63,13 @@ def load_confirmed_giveaways():
     return [json.loads(row[0]) for row in rows]
 
 def save_confirmed_giveaway(giveaway):
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_mysql_connection()
     c = conn.cursor()
     # Сохраняем или обновляем запись
     c.execute("""
-        INSERT OR REPLACE INTO confirmed_giveaways (id, data) VALUES (?, ?)
+        INSERT INTO confirmed_giveaways (id, data)
+        VALUES (%s, %s)
+        ON DUPLICATE KEY UPDATE data = VALUES(data)
     """, (giveaway["id"], json.dumps(giveaway, ensure_ascii=False)))
     conn.commit()
     conn.close()
